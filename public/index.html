@@ -1,0 +1,317 @@
+<!-- HTML → structure (what exists on the page)
+
+Socket.IO client → keeps a persistent connection to server
+
+Events → instead of requests
+
+Rooms → group chats
+
+Optimistic UI → show message immediately
+
+Keep this mental model while reading. -->
+
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <!-- Character encoding -->
+    <meta charset="UTF-8" />
+
+    <!-- Makes the UI responsive on mobile -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>WebSockets – Real Time Chat</title>
+
+    <!-- External CSS (styling only, logic not here) -->
+    <link rel="stylesheet" href="style.css" />
+  </head>
+
+  <body>
+    <div class="container">
+      <h1>Real-Time Chat Application</h1>
+
+      <!-- ===================================================== -->
+      <!-- INDIVIDUAL (GLOBAL) CHAT SECTION -->
+      <!-- ===================================================== -->
+      <section id="individualMessaging" class="messages-section">
+        <h2>Send a Message</h2>
+
+        <!-- User enters their name -->
+        <input type="text" id="usernameInput" placeholder="Your Name" />
+
+        <!-- User enters a message -->
+        <input type="text" id="messageInput" placeholder="Your Message" />
+
+        <!-- Button to send message -->
+        <button id="sendMessageBtn">Send</button>
+
+        <h2>Messages</h2>
+
+        <!-- Messages will appear here -->
+        <div class="messages-list">
+          <ul id="messages"></ul>
+        </div>
+      </section>
+
+      <!-- ===================================================== -->
+      <!-- GROUP CHAT SECTION -->
+      <!-- ===================================================== -->
+      <section id="groupMessaging" class="messages-section">
+        <h2>Group Messaging</h2>
+
+        <!-- Group name input -->
+        <input type="text" id="groupNameInput" placeholder="Group Name" />
+
+        <!-- Group actions -->
+        <button id="createGroupBtn">Create Group</button>
+        <button id="joinGroupBtn">Join Group</button>
+        <button id="leaveGroupBtn">Leave Group</button>
+
+        <!-- Message to group -->
+        <input
+          type="text"
+          id="groupMessageInput"
+          placeholder="Message to Group"
+        />
+        <button id="sendToGroupBtn">Send to Group</button>
+
+        <!-- Available groups -->
+        <h2>Available Groups</h2>
+        <div class="groups-list">
+          <ul id="groupsList"></ul>
+        </div>
+
+        <!-- Group members -->
+        <h2>Group Members</h2>
+        <div class="members-list">
+          <ul id="membersList"></ul>
+        </div>
+
+        <!-- Group chat messages -->
+        <h2>Group Chat Messages</h2>
+        <div class="messages-list">
+          <ul id="groupMessages"></ul>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===================================================== -->
+    <!-- SOCKET.IO CLIENT LIBRARY -->
+    <!-- This file is served by your backend automatically -->
+    <!-- ===================================================== -->
+    <script src="/socket.io/socket.io.js"></script>
+
+    <script>
+      /* =====================================================
+         SOCKET CONNECTION
+         ===================================================== */
+
+      // This opens a persistent WebSocket connection
+      // Think: "Client calls server and keeps the line open"
+      const socket = io();
+
+      /* =====================================================
+         GLOBAL CHAT ELEMENTS
+         ===================================================== */
+
+      const sendMessageBtn = document.getElementById("sendMessageBtn");
+      const usernameInput = document.getElementById("usernameInput");
+      const messageInput = document.getElementById("messageInput");
+      const messagesList = document.getElementById("messages");
+
+      /* =====================================================
+         SEND MESSAGE (CLIENT → SERVER)
+         ===================================================== */
+
+      sendMessageBtn.addEventListener("click", () => {
+        const username = usernameInput.value.trim();
+        const message = messageInput.value.trim();
+
+        // Validation (always protect humans from themselves)
+        if (!username || !message) {
+          alert("Please enter your name and message");
+          return;
+        }
+
+        // -------- OPTIMISTIC UI --------
+        // Show message immediately on sender side
+        const senderDiv = document.createElement("div");
+        senderDiv.className = "message-sender";
+
+        const messageItem = document.createElement("li");
+        messageItem.innerText = `${username}: ${message}`;
+
+        senderDiv.appendChild(messageItem);
+        messagesList.appendChild(senderDiv);
+
+        // -------- EMIT EVENT TO SERVER --------
+        // This is NOT HTTP. This is an event.
+        socket.emit("send_message", { username, message });
+
+        // Clear input
+        messageInput.value = "";
+      });
+
+      /* =====================================================
+         RECEIVE BROADCAST MESSAGE (SERVER → CLIENT)
+         ===================================================== */
+
+      socket.on("broadcast", (data) => {
+        const receiverDiv = document.createElement("div");
+        receiverDiv.className = "message-receiver";
+
+        const messageItem = document.createElement("li");
+        messageItem.innerText = `${data.username}: ${data.message}`;
+
+        receiverDiv.appendChild(messageItem);
+        messagesList.appendChild(receiverDiv);
+      });
+
+      /* =====================================================
+         GROUP CHAT LOGIC
+         ===================================================== */
+
+      const createGroupBtn = document.getElementById("createGroupBtn");
+      const joinGroupBtn = document.getElementById("joinGroupBtn");
+      const leaveGroupBtn = document.getElementById("leaveGroupBtn");
+      const sendToGroupBtn = document.getElementById("sendToGroupBtn");
+
+      const groupNameInput = document.getElementById("groupNameInput");
+      const groupMessageInput = document.getElementById("groupMessageInput");
+
+      const groupsList = document.getElementById("groupsList");
+      const membersList = document.getElementById("membersList");
+      const groupMessagesList = document.getElementById("groupMessages");
+
+      // Keeps track of which room user is currently in
+      let activeRoom = null;
+
+      /* =====================================================
+         CREATE GROUP
+         ===================================================== */
+
+      createGroupBtn.addEventListener("click", () => {
+        const groupName = groupNameInput.value.trim();
+
+        if (!groupName) {
+          alert("Please enter a group name");
+          return;
+        }
+
+        activeRoom = groupName;
+        socket.emit("create_group", groupName);
+        groupNameInput.value = "";
+      });
+
+      /* =====================================================
+         JOIN GROUP
+         ===================================================== */
+
+      joinGroupBtn.addEventListener("click", () => {
+        const groupName = groupNameInput.value.trim();
+
+        if (!groupName) {
+          alert("Please enter a group name to join");
+          return;
+        }
+
+        activeRoom = groupName;
+        socket.emit("join_group", groupName);
+      });
+
+      /* =====================================================
+         LEAVE GROUP
+         ===================================================== */
+
+      leaveGroupBtn.addEventListener("click", () => {
+        if (!activeRoom) {
+          alert("You are not in any group");
+          return;
+        }
+
+        socket.emit("leave_group", activeRoom);
+        activeRoom = null;
+
+        // Clear UI
+        membersList.innerHTML = "";
+        groupMessagesList.innerHTML = "";
+      });
+
+      /* =====================================================
+         SEND MESSAGE TO GROUP
+         ===================================================== */
+
+      sendToGroupBtn.addEventListener("click", () => {
+        const message = groupMessageInput.value.trim();
+
+        if (!message || !activeRoom) {
+          alert("Join a group and type a message");
+          return;
+        }
+
+        socket.emit("group_message", {
+          roomId: activeRoom,
+          message,
+        });
+
+        groupMessageInput.value = "";
+      });
+
+      /* =====================================================
+         UPDATE GROUP LIST (SERVER → CLIENT)
+         ===================================================== */
+
+      socket.on("update_groups_list", (groups) => {
+        groupsList.innerHTML = "";
+
+        groups.forEach((group) => {
+          const li = document.createElement("li");
+          li.innerText = group;
+          groupsList.appendChild(li);
+        });
+      });
+
+      /* =====================================================
+         UPDATE MEMBERS LIST
+         ===================================================== */
+
+      socket.on("update_members_list", (members) => {
+        membersList.innerHTML = "";
+
+        members.forEach((member) => {
+          const li = document.createElement("li");
+          li.innerText = member;
+          membersList.appendChild(li);
+        });
+      });
+
+      /* =====================================================
+         RECEIVE GROUP MESSAGE
+         ===================================================== */
+
+      socket.on("receive_group_message", (data) => {
+        const receiverDiv = document.createElement("div");
+        receiverDiv.className = "message-receiver";
+
+        const messageItem = document.createElement("li");
+        messageItem.innerText = `${data.sender}: ${data.message}`;
+
+        receiverDiv.appendChild(messageItem);
+        groupMessagesList.appendChild(receiverDiv);
+      });
+    </script>
+  </body>
+</html>
+
+
+<!-- HTTP = request → response → goodbye
+
+WebSocket = connection → events → forever
+
+emit = send event
+
+on = listen for event
+
+Rooms = filtered broadcasts
+
+Socket ≠ User (important for scaling later!) -->
